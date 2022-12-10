@@ -1,0 +1,462 @@
+---
+title: "Projeto ENEM"
+format: html
+editor: source
+  markdown: 
+    wrap: 72
+---
+
+### Bibliotecas
+
+```{r}
+library(tidyverse)
+library(reticulate)
+library(sjmisc)
+library(readr)
+library(lsa)
+
+save.image("/Volumes/GoogleDrive/Meu Drive/unicamp - IA024 /projeto_enem/enem_data.RData")
+load("/Volumes/GoogleDrive/Meu Drive/unicamp - IA024 /projeto_enem/enem_data.RData")
+
+```
+
+### Data
+
+\<question \[CE, DS, EK, IC, MR, TC, id, image\]\>
+
+<header>
+
+{text} <statement> {text} <answers> \<option \[correct, id\]\> {text} \<option \[correct, id\]\> {text} \<option \[correct, id\]\> {text} \<option \[correct, id\]\> {text} \<option \[correct, id\]\> {text}
+
+```{r}
+library(XML)
+library(xml2)
+library(here)
+
+files <- dir(path = "ENEMdataset" , pattern = "*.xml", full.names = TRUE)
+files0 <- dir(path = "ENEMdataset" , pattern = "*.xml", full.names = FALSE)
+bd_enem  <- files %>% map(XML::xmlToList) 
+names(bd_enem) <- files0
+
+# Load the packages required to read XML files.
+library("XML")
+library("methods")
+
+# Convert the input xml file to a data frame.
+xmldataframe <- xmlToDataFrame("ENEMdataset/2010-1.xml")
+print(xmldataframe)
+
+
+names(bd_enem[[1]][[1]])
+
+
+names(bd_enem$`2009-1.xml`)
+names(bd_enem$`2009-1.xml`$question)
+xml2::html_structure()
+
+# question is list of 4
+
+bd_enem$`2009-1.xml`$question %>% glimpse
+
+data <- xml2::read_xml("2016-1.xml")
+
+ read_xml("ENEMdataset/2010-1.xml") %>% xml_structure
+
+
+
+data <- xmlParse("2016-1.xml")
+df$header
+```
+
+-   Only questions from Humanities and Language
+
+-   Tags
+
+    -   image (IMG) is associated to every question that is accompanied by an image
+    -   EK: "encyclopedic knowledge" suggests that the question resembles (or is) a factoid question, thus it can be answered by consulting an external source of knowledge such as an encyclopedia.
+    -   IC: "image compreheension" s assigned to questions which require identifying or understanding the constituent elements of a given painting, cartoon, photo or advertisement.
+    -   TC: "text comprehension" if the answer can be identified somehow using the given text.
+    -   DS: Domain Specific Knowledge
+    -   MR: Mathematical Reasoning
+    -   CE: chemical elements
+
+    Text Comprehension (TC), Encyclopedic Knowledge (EK), Image Comprehension (IC), (DS) and (MR). We also annotated questions with informative tags that described whether the question has an image in its body or a mention to (CE)
+
+We selected - questions not labeled as IC, CE or MR. That is, questions that do not require understanding images and chemical elements or solving mathematical problems. - This restriction makes available 920 questions comprising 10 exams -- one for each year from 2009 to 2017, having two exams in 2016
+
+```{r}
+
+  data_enem <- read_csv("data_enem0.csv")
+  data_enem_selected <- data_enem %>% filter(IC != "Yes", CE != "Yes", MR != "Yes")
+  
+  names(data_enem)
+  data_enem %>% filter(IC != "Yes", CE != "Yes", MR != "Yes") %>% dim
+  data_enem_selected %>% view
+
+```
+
+### Imprime questões
+
+```{r}
+
+  data_enem %>% frq(gab)
+  data_enem %>% select(CE:TC, image) %>% frq
+  
+  print(data_enem_selected)
+  
+  print_q_enem <- function(x, df){
+   cat(paste(
+   df[x, ]$header, 
+   df[x, ]$statement, 
+   paste0("A. ", df[x, ]$A), 
+   paste0("B. ", df[x, ]$B), 
+   paste0("C. ", df[x, ]$C), 
+   paste0("D. ", df[x, ]$D),
+   paste0("E. ", df[x, ]$E), 
+   paste0("Alternativa correta:", df[x, ]$gab), 
+   sep="\n"))
+  }
+  
+  print_q_enem(23, data_enem_selected)
+  
+  print_q_enem(8, data_enem_selected)
+  
+   print_q_enem(61,  data_enem_selected)
+  print_q_enem(800, data_enem_selected)
+ 
+  
+  
+```
+
+### Dados em formato long para finetuning no BERTimbau
+
+```{r}
+
+data_enem_selected %>% glimpse
+
+data_enem_selected2 <- data_enem_selected %>% 
+ mutate(question_id = paste0(enem_version, "_", id)) %>%
+ pivot_longer(cols = A:E, names_to = "opcao", values_to = "opcao_text" ) %>% 
+ mutate(
+  text = paste0(header, " ",  statement, " [SEP] ", opcao_text), 
+  label = ifelse(opcao == gab, 1, 0)) 
+
+data_enem_selected2$text[1]
+
+
+```
+
+### Selecionando questões para treino
+
+```{r}
+
+n = dplyr::n_distinct(data_enem_selected$question_id)
+cod_question <- unique(data_enem_selected$question_id)
+
+set.seed(23)
+idx <- sample(1:n) 
+prop_train <- .80
+n_train = round(prop_train*n)
+n_test = n - n_train
+ 
+cod_question_train = cod_question[idx][1:n_train] 
+
+data_enem_selected <- data_enem_selected %>% 
+   mutate(train_test = ifelse(question_id %in% cod_question_train, 1, 0))
+
+frq(data_enem_selected$train_test)
+
+ data_enem_selected2$train_test %>% frq()
+             
+
+data_enem_selected2 %>% write_csv("data_enem_long.csv")
+```
+
+```{r}
+
+data_enem_selected2 <- data_enem_selected2 %>% 
+   mutate(train_test = ifelse(question_id %in% cod_question_train, 1, 0))
+
+saveRDS(data_enem_selected, file = "enem_data.RDS")
+ 
+```
+
+### Over sampling
+
+```{r}
+
+
+respostas_corretas <-  data_enem_selected2 %>% filter(label == 1)
+
+data_enem_selected3 <- bind_rows(
+ data_enem_selected2,
+ respostas_corretas,
+ respostas_corretas,
+ respostas_corretas
+)
+
+frq(data_enem_selected3$label)
+
+
+data_enem_selected3 %>% write_csv("data_enem_long.csv")
+
+```
+
+### Embeddings
+
+```{r}
+
+
+data_enem_selected <- data_enem_selected %>% 
+ mutate(question_id = paste0(enem_version, "_", id))
+
+
+data_enem_selected %>% mutate(text_question = paste0(header, " ", statement)) %>%
+ select(question_id, text_question) %>% write_csv("text_question.csv")
+
+
+data_enem_selected2 %>% glimpse
+
+data_enem_selected2 %>% 
+ mutate(option_id = paste0(question_id , "_", opcao )) %>%
+ select(option_id,  opcao_text ) %>% write_csv("text_otpion.csv")
+
+```
+
+```{python}
+
+import pickle
+with open('/Volumes/GoogleDrive/Meu Drive/unicamp - IA024 /projeto_enem/embeddings2.pkl',  'rb') as f:
+   embeddings_data2 =  pickle.load(f)
+#  embeddings_data2[0]
+
+```
+
+```{r}
+
+embeddings <- py$embeddings_data2 
+embeddings %>% glimpse
+embeddings[[1]] %>% glimpse
+lsa::cosine(embeddings[[1]]$q2, embeddings[[1]])
+names(data_enem_selected)
+data_enem_selected %>% glimpse
+
+embeddings[[1]]$o_cls[[1]]
+embeddings[[i]]$s2
+
+v = (1:5)  %>% set_names(c("A", "B", "C", "D", "E"))
+
+for (i in seq_along(embeddings)) {
+  for (o in 1:5){
+   data_enem_selected[i, paste0("q_", v[o])] <-  cor(embeddings[[i]]$q2, embeddings[[i]]$o2[[o]])
+   data_enem_selected[i, paste0("s_", v[o])] <-  cor(embeddings[[i]]$s2, embeddings[[i]]$o2[[o]])
+   data_enem_selected[i, paste0("q_cls", v[o])] <-  cor(embeddings[[i]]$o_cls[[o]], embeddings[[i]]$o2[[o]])
+  }
+}
+
+data_enem_selected <- data_enem_selected %>% 
+ rowwise() %>%
+ mutate(
+  q_pred = which.max(c(q_1, q_2, q_3, q_4,q_5)),
+  s_pred = which.max(c(s_1, s_2, s_3, s_4,s_5)),
+  cls_pred = which.max(c(q_cls1, q_cls2, q_cls3, q_cls4, q_cls5))
+      ) %>%
+ ungroup()
+
+data_enem_selected$gab2 <- v[data_enem_selected$gab]
+graphics.off()
+dev.close()
+
+setwd("~/Dropbox (Personal)/Artigos/2022 Automated scoring of MCT")
+
+data_enem_selected %>% ggplot(aes(x=q_1)) + geom_histogram(alpha=1/2, color= "white")
+
+hist(data_enem_selected$q_1)
+
+
+n <- order(names(data_enem_selected)[20:34]) %>% names(data_enem_selected)[20:34][.]
+data_enem_selected <- data_enem_selected[, c(names(data_enem_selected)[1:20], n)]
+
+saveRDS(data_enem_selected, file = "data_enem_selected.RDS")
+
+
+
+
+```
+
+### Fine tuning
+
+```{r}
+library(readr)
+test_results_bertimbau_base <- read_csv("/Volumes/GoogleDrive/Meu Drive/unicamp - IA024 /projeto_enem/test_results_bertimbau_base.csv")
+
+test_results_bertimbau_base <- test_results_bertimbau_base %>% 
+ mutate(label = factor(label),
+        true_label = factor(ifelse(true_label ==1, "LABEL_1", "LABEL_0"))
+ )
+
+test_results_bertimbau_base 
+
+ cat( "\n", "\n")
+    cat("Confusion Matrix and other metrics", "\n", "\n")
+    cm = caret::confusionMatrix(
+        data = factor(test_results_bertimbau_base$label),
+        reference =  test_results_bertimbau_base$true_label,
+        positive ="LABEL_1",
+        mode = "everything"
+      ) %>% print
+    
+    
+ test_results_bertimbau_base  %>%  sjmisc::flat_table( true_label, label, margin = "row")
+
+
+ janitor::tabyl(test_results_bertimbau_base , true_label,label) %>% 
+   adorn_totals(c("row")) %>%
+   adorn_percentages() %>%
+   adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  adorn_title("combined")
+ 
+ 
+ 
+```
+
+```{r}
+
+compute_metrics <- function(y_test, y_pred, labels =  c("1", "2", "3", "4", "5"), indices = 1:5){
+  
+
+ cm = caret::confusionMatrix(
+        data = factor(y_pred),
+        reference =  factor(y_test),
+        positive = labels,
+        mode = "everything"
+      ) %>% print
+ 
+ cat( "\n", "\n")
+ cat("F1 score", "\n", "\n")
+ print(yardstick::f_meas(cm$table[ indices,  indices ], truth = "Reference", estimator = "macro", na_rm = T))
+ print(caret::F_meas(cm$table))
+    
+ cat( "\n", "\n")
+ cat("F1 macro average score", "\n", "\n")
+    
+ rs <- crfsuite::crf_evaluation(
+        pred = y_pred,
+        obs = y_test,
+        labels = labels,
+        labels_overall = labels
+        )
+ print(rs)  
+    
+ 
+    
+} 
+```
+
+### Evaluate models 
+
+```{r}
+# Header
+compute_metrics(y_test = data_enem_selected$gab2, y_pred = data_enem_selected$q_pred)
+
+# Statement
+compute_metrics(y_test = data_enem_selected$gab2, y_pred = data_enem_selected$s_pred)
+
+# CLS
+compute_metrics(y_test = data_enem_selected$gab2, y_pred = data_enem_selected$cls_pred)
+
+# BERTimbaou finetuned 
+
+compute_metrics(y_test = test_results_bertimbau_base$label, 
+                y_pred =test_results_bertimbau_base$true_label, 
+                labels = levels(test_results_bertimbau_base$label),
+                indices = 1:2)
+
+
+ library(readr)
+ results_davinci_002_few_shot  <- read_csv("answers-text-davinci-002-0shot-.csv") %>%
+   mutate(across(model_answers:right_answers, ~as.integer(factor(.x))))
+ 
+ compute_metrics(y_test = results_davinci_002_few_shot$right_answers, 
+                 y_pred = results_davinci_002_few_shot$model_answers)
+ 
+  results_davinci_003_few_shot  <- read_csv("answers-text-davinci-003-0shot.csv") %>%
+   mutate(across(model_answers:right_answers, ~as.integer(factor(.x))))
+  
+   
+ compute_metrics(y_test = results_davinci_003_few_shot$right_answers, 
+                 y_pred = results_davinci_003_few_shot$model_answers)
+ 
+ 
+```
+
+```{r}
+
+ library(janitor)
+ 
+ janitor::tabyl(data_enem_selected, gab2, s_pred) %>% 
+   adorn_totals(c("row")) %>%
+   adorn_percentages() %>%
+   adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  adorn_title("combined")
+ 
+  janitor::tabyl(data_enem_selected, gab2, q_pred) %>% 
+   adorn_totals(c("row")) %>%
+   adorn_percentages() %>%
+   adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  adorn_title("combined")
+  
+  janitor::tabyl(data_enem_selected, gab2, cls_pred) %>% 
+   adorn_totals(c("row")) %>%
+   adorn_percentages() %>%
+   adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  adorn_title("combined")
+ 
+  
+ sjmisc::flat_table(data_enem_selected, gab2, cls_pred, margin = "row", digits = 0)
+ sjmisc::flat_table(data_enem_selected, gab2, s_pred, margin = "row", digits = 0)
+ sjmisc::flat_table(data_enem_selected, gab2, q_pred, margin = "row", digits = 0)
+```
+
+
+### Prompts for Chain og thought
+
+
+Ano/Versão: 2009-1
+
+Cabeçalho: Estima-se que haja atualmente no mundo 40 milhões de pessoas infectadas pelo HIV (o vírus que causa a AIDS), sendo que as taxas de novas infecções continuam crescendo, principalmente na África, Ásia e Rússia. Nesse cenário de pandemia, uma vacina contra o HIV teria imenso impacto, pois salvaria milhões de vidas. Certamente seria um marco na história planetária e também uma esperança para as populações carentes de tratamento antiviral e de acompanhamento médico. TANURI, A.; FERREIRA JUNIOR, O. C. Vacina contra Aids: desafios e esperanças. Ciência Hoje (44) 26, 2009 (adaptado).
+
+Enunciado: Uma vacina eficiente contra o HIV deveria
+
+Alternativas: \[A\] - induzir a imunidade, para proteger o organismo da contaminação viral. B - ser capaz de alterar o genoma do organismo portador, induzindo a síntese de enzimas protetoras. C - produzir antígenos capazes de se ligarem ao vírus, impedindo que este entre nas células do organismo humano. D - ser amplamente aplicada em animais, visto que esses são os principais transmissores do vírus para os seres humanos. E - estimular a imunidade, minimizando a transmissão do vírus por gotículas de saliva.
+
+As vacinas contêm antígenos atenuados que induzem o organismo humano a produzir anticorpos especí- ficos, os quais protegem contra a contaminação e a proliferação viral.
+
+Ano/Versão: 2009-1
+
+Cabeçalho: Em um experimento, preparou-se um conjunto de plantas por técnica de clonagem a partir de uma planta original que apresentava folhas verdes. Esse conjunto foi dividido em dois grupos, que foram tratados de maneira idêntica, com exceção das condições de iluminação, sendo um grupo exposto a ciclos de iluminação solar natural e outro mantido no escuro. Após alguns dias, observou-se que o grupo exposto à luz apresentava folhas verdes como a planta original e o grupo cultivado no escuro apresentava folhas amareladas.
+
+Enunciado: Ao final do experimento, os dois grupos de plantas apresentaram
+
+Alternativas: A - os genótipos e os fenótipos idênticos. \[B\] - os genótipos idênticos e os fenótipos diferentes. C - diferenças nos genótipos e fenótipos. D - o mesmo fenótipo e apenas dois genótipos diferentes. E - o mesmo fenótipo e grande variedade de genótipos.
+
+Resolução As plantas clonadas a partir de um vegetal original apresentam o mesmo genótipo e diferentes fenótipos resultantes da exposição diferencial à luz e à escuridão.
+
+Ano/Versão: 2009-2
+
+Cabeçalho: Gênero dramático é aquele em que o artista usa como intermediária entre si e o público a representação. A palavra vem do grego drao (fazer) e quer dizer ação. A peça teatral é, pois, uma composição literária destinada à apresentação por atores em um palco, atuando e dialogando entre si. O texto dramático é complementado pela atuação dos atores no espetáculo teatral e possui uma estrutura específica, caracterizada: 1) pela presença de personagens que devem estar ligados com lógica uns aos outros e à ação; 2) pela ação dramática (trama, enredo), que é o conjunto de atos dramáticos, maneiras de ser e de agir das personagens encadeadas à unidade do efeito e segundo uma ordem composta de exposição, conflito, complicação, clímax e desfecho; 3) pela situação ou ambiente, que é o conjunto de circunstâncias físicas, sociais, espirituais em que se situa a ação; 4) pelo tema, ou seja, a ideia que o autor (dramaturgo) deseja expor, ou sua interpretação real por meio da representação. COUTINHO, A. Notas de teoria literária. Rio de Janeiro: Civilização Brasileira, 1973 (adaptado).
+
+Enunciado: Considerando o texto e analisando os elementos que constituem um espetáculo teatral, conclui-se que
+
+Alternativas: A - a criação do espetáculo teatral apresenta-se como um fenômeno de ordem individual, pois não é possível sua concepção de forma coletiva. B - o cenário onde se desenrola a ação cênica é concebido e construído pelo cenógrafo de modo autônomo e independente do tema da peça e do trabalho interpretativo dos atores. \[C\] - o texto cênico pode originar-se dos mais variados gêneros textuais, como contos, lendas, romances, poesias, crônicas, notícias, imagens e fragmentos textuais, entre outros. D - o corpo do ator na cena tem pouca importância na comunicação teatral, visto que o mais importante é a expressão verbal, base da comunicação cênica em toda a trajetória do teatro até os dias atuais. E - a iluminação e o som de um espetáculo cênico independem do processo de produção/recepção do espetáculo teatral, já que se trata de linguagens artísticas diferentes, agregadas posteriormente à cena teatral.
+
+Resolução A conclusão proposta pela alternativa c não decorre necessariamente do texto transcrito, mas é a única que não o contraria -- além de exprimir uma verdade. As demais alternativas apresentam os seguintes erros: a) nada no texto permite negar a possibilidade de criação teatral coletiva; b) e e) os diversos elementos que compõem o espetáculo teatral devem ser correlacio- nados, como dá a entender o texto, e não tratados de forma independente; d) nada no texto permite concluir pela desimportância do corpo do autor e pela predominância da expressão verbal.
+
+```{r}
+data_enem_selected %>% filter(train_test ==0) %>% select(question_id) %>% write_csv(file = "quest_id_teste.csv")
+```
+
